@@ -1,0 +1,147 @@
+name: Build APK
+
+on:
+  workflow_dispatch: # bisa di-trigger manual dari tab Actions
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Generate platform scaffolding (android/ios) kalau belum ada
+        run: |
+          if [ ! -d "android" ]; then
+            flutter create --platforms=android --org com.seraph .
+          fi
+
+      - name: Patch package name ke com.seraph.apps (sesuai request awal)
+        run: |
+          OLD_PKG="com.seraph.seraphx"
+          NEW_PKG="com.seraph.apps"
+          OLD_PATH=$(echo "$OLD_PKG" | tr '.' '/')
+          NEW_PATH=$(echo "$NEW_PKG" | tr '.' '/')
+          KOTLIN_ROOT="android/app/src/main/kotlin"
+
+          # Pindah MainActivity.kt ke folder sesuai package baru
+          if [ -f "$KOTLIN_ROOT/$OLD_PATH/MainActivity.kt" ]; then
+            mkdir -p "$KOTLIN_ROOT/$NEW_PATH"
+            mv "$KOTLIN_ROOT/$OLD_PATH/MainActivity.kt" "$KOTLIN_ROOT/$NEW_PATH/MainActivity.kt"
+            sed -i "s/package $OLD_PKG/package $NEW_PKG/" "$KOTLIN_ROOT/$NEW_PATH/MainActivity.kt"
+            find "$KOTLIN_ROOT/com/seraph/seraphx" -type d -empty -delete 2>/dev/null || true
+          fi
+
+          # Patch namespace & applicationId di build.gradle.kts
+          GRADLE_KTS="android/app/build.gradle.kts"
+          if [ -f "$GRADLE_KTS" ]; then
+            sed -i "s/namespace = \"$OLD_PKG\"/namespace = \"$NEW_PKG\"/" "$GRADLE_KTS"
+            sed -i "s/applicationId = \"$OLD_PKG\"/applicationId = \"$NEW_PKG\"/" "$GRADLE_KTS"
+          fi
+          echo "--- build.gradle.kts setelah patch ---"
+          grep -E "namespace|applicationId" "$GRADLE_KTS"
+
+      - name: Patch AndroidManifest.xml (permission storage & tools namespace)
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "xmlns:tools" "$MANIFEST"; then
+            sed -i 's#xmlns:android="http://schemas.android.com/apk/res/android"#xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools"#' "$MANIFEST"
+          fi
+          if ! grep -q "MANAGE_EXTERNAL_STORAGE" "$MANIFEST"; then
+            sed -i '0,/<application/s##<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.TTS_SERVICE" />\n        </intent>\n    </queries>\n\n    <application#' "$MANIFEST"
+          fi
+          cat "$MANIFEST"
+
+      - name: Clean previous build cache
+        run: flutter clean
+
+      - name: Enable core library desugaring (dibutuhin flutter_local_notifications)
+        run: |
+          GRADLE_KTS="android/app/build.gradle.kts"
+          if [ -f "$GRADLE_KTS" ]; then
+            if ! grep -q "isCoreLibraryDesugaringEnabled" "$GRADLE_KTS"; then
+              sed -i '/compileOptions {/a\        isCoreLibraryDesugaringEnabled = true' "$GRADLE_KTS"
+            fi
+            if ! grep -q "coreLibraryDesugaring" "$GRADLE_KTS"; then
+              if grep -q "^dependencies {" "$GRADLE_KTS"; then
+                sed -i '/^dependencies {/a\    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")' "$GRADLE_KTS"
+              else
+                printf '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n' >> "$GRADLE_KTS"
+              fi
+            fi
+          fi
+          echo "--- Cek hasil patch ---"
+          grep -A2 "coreLibraryDesugaring\|isCoreLibraryDesugaringEnabled" "$GRADLE_KTS"
+
+      - name: Set versi build (dari run number, buat update checker)
+        run: |
+          sed -i "s/^version: \(.*\)+.*/version: \1+${{ github.run_number }}/" pubspec.yaml
+          grep "^version:" pubspec.yaml
+
+      - name: Decode keystore signing (biar update APK gak "aplikasi tidak terinstall")
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+
+      - name: Patch signingConfigs di build.gradle.kts
+        run: |
+          GRADLE_KTS="android/app/build.gradle.kts"
+          sed -i '0,/android {/{s//android {\n    signingConfigs {\n        create("release") {\n            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "upload-keystore.jks")\n            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""\n            keyAlias = System.getenv("KEY_ALIAS") ?: ""\n            keyPassword = System.getenv("KEY_PASSWORD") ?: ""\n        }\n    }/}' "$GRADLE_KTS"
+          sed -i 's/signingConfig = signingConfigs.getByName("debug")/signingConfig = signingConfigs.getByName("release")/' "$GRADLE_KTS"
+          grep -A6 "signingConfigs {" "$GRADLE_KTS"
+
+      - name: Patch minSdk ke 26 (dibutuhin zikzak_inappwebview)
+        run: |
+          GRADLE_KTS="android/app/build.gradle.kts"
+          if [ -f "$GRADLE_KTS" ]; then
+            sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 26/' "$GRADLE_KTS"
+          fi
+          grep "minSdk" "$GRADLE_KTS"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate app icon dari gambar
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze code (cek error lebih cepat sebelum build)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build APK
+        run: flutter build apk --release
+        env:
+          KEYSTORE_PATH: upload-keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload APK (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: seraphx-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Publish ke GitHub Releases (buat in-app updater)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: SeraphX Build ${{ github.run_number }}
+          files: build/app/outputs/flutter-apk/app-release.apk
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

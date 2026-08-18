@@ -1,0 +1,54 @@
+name: seraphx
+description: "SeraphX - personal assistant app"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1           # font Archivo & JetBrains Mono sesuai desain original
+  http: ^1.2.2                  # request ke semua REST API (tiktok, ai chat, github)
+  path_provider: ^2.1.4         # akses folder storage khusus app device
+  file_picker: ^10.3.7          # buat pilih file ZIP (fitur github push) - v10+ pakai compileSdk dinamis
+  archive: ^3.6.1                # extract isi ZIP (pure Dart, gak ada dependency Android native)
+  device_info_plus: ^11.4.0     # info device buat halaman Home - versi terbaru, aman dari compileSdk lama
+  battery_plus: ^7.0.0          # baca persentase & status baterai asli
+  connectivity_plus: ^7.0.0     # baca status jaringan asli (WiFi/Data/Offline)
+  zikzak_inappwebview: ^4.4.4     # browser dengan tab & adblock - fork flutter_inappwebview yang aktif di-maintain (fix bug AGP9)
+  gal: ^2.3.1                    # simpan foto/video ke galeri device (bukan folder app)
+  flutter_tts: ^4.2.5            # text to speech
+  geolocator: ^14.0.2            # lokasi user buat cek jarak ke bencana
+  flutter_local_notifications: ^19.5.0  # notifikasi peringatan bencana
+  open_filex: ^4.7.0             # buka APK hasil download buat trigger installer
+  package_info_plus: ^8.1.2      # baca versi app sendiri buat dibandingin
+  image: ^4.3.0                   # encode/decode gambar buat fitur steganography (dipin biar kompatibel sama archive ^3.6.1)
+  crypto: ^3.0.7                  # hash generator (MD5/SHA1/SHA256/SHA512) & key derivation AES
+  qr_flutter: ^4.1.0              # generate QR code
+  mobile_scanner: ^7.4.0          # scan QR code (pake kamera)
+  encrypt: ^5.0.3                 # AES text encryptor (pure Dart, gak ada native code)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: "launcher_icon"
+  min_sdk_android: 21
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+  fonts:
+    - family: EvolveSans
+      fonts:
+        - asset: assets/fonts/EvolveSans-Medium.ttf
+          weight: 500
